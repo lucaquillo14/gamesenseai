@@ -1,4 +1,5 @@
-import streamlit as st
+import 
+streamlit as st
 import os
 from pathlib import Path
 import firebase_admin
@@ -6,7 +7,7 @@ from firebase_admin import credentials, firestore, auth
 
 # --- Initialize Firebase ---
 if not firebase_admin._apps:
-    cred = credentials.Certificate("/Users/lucasaguillo/gamesense-ai/serviceAccountKey.json")
+    cred = credentials.Certificate("../serviceAccountKey.json")
     firebase_admin.initialize_app(cred)
 
 db = firestore.client()
