@@ -1,0 +1,8 @@
+{'timestamp': '2025-10-18 15:10:16', 'video': 'ScreenRecording_10-13-2025 16-20-52_1.mov', 'role': 'Striker', 'skill': 'Shooting', 'feedback': 'Excellent finishing 🎯\nWork on first-touch control ⚡\nGreat positioning 🏃\u200d♂️'}
+{'timestamp': '2025-10-18 15:10:19', 'video': 'ScreenRecording_10-13-2025 16-20-52_1.mov', 'role': 'Midfielder', 'skill': 'Shooting', 'feedback': 'Good effort!'}
+{'timestamp': '2025-10-18 15:10:24', 'video': 'ScreenRecording_10-13-2025 16-20-52_1.mov', 'role': 'Midfielder', 'skill': 'Tackling', 'feedback': 'Good effort!'}
+{'timestamp': '2025-10-18 15:10:38', 'video': 'ScreenRecording_10-13-2025 16-20-52_1.mov', 'role': 'Midfielder', 'skill': 'Tackling', 'feedback': 'Good effort!'}
+{'timestamp': '2025-10-18 15:10:40', 'video': 'ScreenRecording_10-13-2025 16-20-52_1.mov', 'role': 'Midfielder', 'skill': 'Tackling', 'feedback': 'Good effort!'}
+{'timestamp': '2025-10-18 15:10:52', 'video': 'ScreenRecording_10-13-2025 16-20-52_1.mov', 'role': 'Midfielder', 'skill': 'Tackling', 'feedback': 'Good effort!'}
+{'timestamp': '2025-10-18 15:10:53', 'video': 'ScreenRecording_10-13-2025 16-20-52_1.mov', 'role': 'Midfielder', 'skill': 'Tackling', 'feedback': 'Good effort!'}
+{'timestamp': '2025-10-18 15:10:55', 'video': 'ScreenRecording_10-13-2025 16-20-52_1.mov', 'role': 'Midfielder', 'skill': 'Tackling', 'feedback': 'Good effort!'}
