@@ -1,161 +1,234 @@
 # frontend/app.py
 """
-GameSense AI — MVP (Cloud + GitHub-persistent storage)
-- Signup / Signin (bcrypt + smart recovery)
-- Persistent storage via GitHub (storage.json committed to repo); fallback to /tmp if secrets missing
-- Upload video (saved to /tmp/videos), dynamic mock feedback (expanded role/skills)
+GameSense AI — Deployable MVP (GitHub JSON + Videos)
+- Auth: passlib (PBKDF2) — bcrypt-free & deploy-safe
+- Persistent storage in GitHub:
+    • JSON: data/storage.json
+    • Videos: data/videos/<id>_<name>.<ext>
+- Upload, dynamic feedback (expanded by role/skill)
 - Rating slider, custom prompt, emoji highlights
-- My History: view, delete, download PDF (crash-proof: sanitised + hard-wrapped)
-- Membership page (Free / Plus / Academy [BEST VALUE] / Pro) — visual only
+- My History: view, delete, PDF (width-safe)
+- Membership (Free / Plus / Academy / Pro)
 - Dashboard (Plotly)
-- Background image via CSS if assets/bg.jpg exists
+- Background CSS + membership cards
+- Daily backup: data/backups/storage-YYYYMMDD.json
 """
 
-import os, json, uuid, tempfile, re, random, base64, time
+# --- Silence local OpenSSL/urllib3 warning (macOS LibreSSL) ---
+import warnings
+warnings.filterwarnings("ignore", message="urllib3 v2 only supports OpenSSL", category=UserWarning)
+
+import os, json, uuid, tempfile, re, random, base64, hmac, hashlib
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, date
+from typing import Optional, Tuple, Dict, Any
 
 import streamlit as st
-import bcrypt
+from passlib.hash import pbkdf2_sha256  # bcrypt-free
 from fpdf import FPDF
 import pandas as pd
 import plotly.express as px
 import requests
+import urllib3
+urllib3.disable_warnings()  # extra quiet locally
 
-# ------------------------------------------------------------------------------------
-# Streamlit page setup
-# ------------------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# Page config
+# -----------------------------------------------------------------------------
 st.set_page_config(page_title="GameSense AI", layout="wide")
 
-# ------------------------------------------------------------------------------------
-# Paths (videos local in /tmp; storage via GitHub sync)
-# ------------------------------------------------------------------------------------
-TMP_BASE = Path(tempfile.gettempdir()) / "gamesense_ai"
-DATA_DIR = TMP_BASE / "data"
-VIDEO_DIR = TMP_BASE / "videos"
-ASSETS_DIR = TMP_BASE / "assets"     # optional, likely empty on cloud
+# -----------------------------------------------------------------------------
+# Paths (local best-effort for assets/temp)
+# -----------------------------------------------------------------------------
+ROOT = Path.cwd()
+DATA_DIR = ROOT / "data"         # local fallback
+VIDEO_DIR = ROOT / "videos"      # local fallback preview
+ASSETS_DIR = ROOT / "assets"
+BACKGROUND_FILE = ASSETS_DIR / "bg.jpg"
+BANNER_FILE = ASSETS_DIR / "banner.jpg"
 for d in (DATA_DIR, VIDEO_DIR, ASSETS_DIR):
     d.mkdir(parents=True, exist_ok=True)
 
-LOCAL_STORAGE_FILE = DATA_DIR / "storage.json"
-BACKGROUND_FILE = ASSETS_DIR / "bg.jpg"
-BANNER_FILE = ASSETS_DIR / "banner.jpg"
+# -----------------------------------------------------------------------------
+# GitHub config (secrets or env)
+# -----------------------------------------------------------------------------
+GH_TOKEN       = st.secrets.get("GITHUB_TOKEN", os.getenv("GITHUB_TOKEN"))
+GH_REPO        = st.secrets.get("GH_REPO", os.getenv("GH_REPO"))  # "owner/repo"
+GH_REPO_OWNER  = st.secrets.get("GH_REPO_OWNER", os.getenv("GH_REPO_OWNER"))
+GH_REPO_NAME   = st.secrets.get("GH_REPO_NAME", os.getenv("GH_REPO_NAME"))
+GH_BRANCH      = st.secrets.get("GH_BRANCH", os.getenv("GH_BRANCH", "main"))
+GH_JSON_PATH   = st.secrets.get("GH_JSON_PATH", os.getenv("GH_JSON_PATH", "data/storage.json"))
+GH_VIDEOS_DIR  = st.secrets.get("GH_VIDEOS_DIR", os.getenv("GH_VIDEOS_DIR", "data/videos"))
+GH_BACKUP_DIR  = st.secrets.get("GH_BACKUP_DIR", os.getenv("GH_BACKUP_DIR", "data/backups"))
 
-# ------------------------------------------------------------------------------------
-# GitHub persistent storage configuration
-# Provide via Streamlit Secrets (Manage app → Settings → Secrets) or env vars.
-# Required: GITHUB_TOKEN, GH_REPO_OWNER, GH_REPO_NAME
-# Optional: GH_BRANCH (default "main"), GH_STORAGE_PATH (default "data/storage.json")
-# ------------------------------------------------------------------------------------
-GH_TOKEN = st.secrets.get("GITHUB_TOKEN", os.getenv("GITHUB_TOKEN"))
-GH_OWNER = st.secrets.get("GH_REPO_OWNER", os.getenv("GH_REPO_OWNER"))
-GH_REPO = st.secrets.get("GH_REPO_NAME", os.getenv("GH_REPO_NAME") or os.getenv("GH_REPO"))
-GH_BRANCH = st.secrets.get("GH_BRANCH", os.getenv("GH_BRANCH", "main"))
-GH_STORAGE_PATH = st.secrets.get("GH_STORAGE_PATH", os.getenv("GH_STORAGE_PATH", "data/storage.json"))
+# Support owner/name split
+if not GH_REPO and GH_REPO_OWNER and GH_REPO_NAME:
+    GH_REPO = f"{GH_REPO_OWNER}/{GH_REPO_NAME}"
 
-def _gh_headers():
-    return {"Authorization": f"Bearer {GH_TOKEN}", "Accept": "application/vnd.github+json"}
+GH_API = "https://api.github.com"
 
-def gh_enabled() -> bool:
-    return bool(GH_TOKEN and GH_OWNER and GH_REPO and GH_BRANCH and GH_STORAGE_PATH)
+def gh_headers() -> Dict[str, str]:
+    return {
+        "Authorization": f"Bearer {GH_TOKEN}" if GH_TOKEN else "",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
 
-def gh_get_storage():
-    """Fetch storage.json from GitHub. Returns (dict, sha) or (None, None) if not found/fails."""
+def gh_get_file(owner_repo: str, path: str, ref: str = "main") -> Tuple[Optional[str], Optional[str]]:
+    """Return (text, sha) or (None, None) if missing/error."""
     try:
-        url = f"https://api.github.com/repos/{GH_OWNER}/{GH_REPO}/contents/{GH_STORAGE_PATH}?ref={GH_BRANCH}"
-        r = requests.get(url, headers=_gh_headers(), timeout=15)
+        url = f"{GH_API}/repos/{owner_repo}/contents/{path}"
+        r = requests.get(url, headers=gh_headers(), params={"ref": ref}, timeout=20)
         if r.status_code == 200:
             data = r.json()
             content_b64 = data.get("content", "")
-            decoded = base64.b64decode(content_b64).decode("utf-8")
             sha = data.get("sha")
-            return json.loads(decoded), sha
+            decoded = base64.b64decode(content_b64).decode("utf-8", errors="ignore")
+            return decoded, sha
         elif r.status_code == 404:
-            # file not found — treat as empty new file
-            return {"users": {}, "sessions": []}, None
-        else:
             return None, None
-    except Exception:
+        else:
+            st.warning(f"GitHub GET error {r.status_code}: {r.text[:160]}")
+            return None, None
+    except Exception as e:
+        st.warning(f"GitHub GET exception: {e}")
         return None, None
 
-def gh_put_storage(storage_dict, sha=None):
-    """Commit updated storage.json to GitHub."""
+def gh_put_text(owner_repo: str, path: str, content_text: str, message: str, branch: str, sha: Optional[str]):
+    """Create/update a text file in GitHub."""
     try:
-        url = f"https://api.github.com/repos/{GH_OWNER}/{GH_REPO}/contents/{GH_STORAGE_PATH}"
-        content_str = json.dumps(storage_dict, indent=2, ensure_ascii=False)
-        content_b64 = base64.b64encode(content_str.encode("utf-8")).decode("utf-8")
-        msg = f"GameSense AI: update storage.json ({datetime.utcnow().isoformat()})"
-        payload = {
-            "message": msg,
-            "content": content_b64,
-            "branch": GH_BRANCH,
+        url = f"{GH_API}/repos/{owner_repo}/contents/{path}"
+        body = {
+            "message": message,
+            "content": base64.b64encode(content_text.encode("utf-8")).decode("utf-8"),
+            "branch": branch,
         }
         if sha:
-            payload["sha"] = sha
-        r = requests.put(url, headers=_gh_headers(), json=payload, timeout=20)
-        if r.status_code in (200, 201):
-            return r.json().get("content", {}).get("sha")
-        return None
-    except Exception:
-        return None
+            body["sha"] = sha
+        r = requests.put(url, headers=gh_headers(), json=body, timeout=25)
+        return r.status_code in (200, 201), r.status_code, r.text
+    except Exception as e:
+        return False, 0, str(e)
 
-# ------------------------------------------------------------------------------------
-# Storage helpers (auto GitHub sync; fallback local)
-# ------------------------------------------------------------------------------------
-def _ensure_local_base(storage_dict=None):
-    """Make sure LOCAL_STORAGE_FILE exists and is minimally valid."""
-    if storage_dict is None:
-        if not LOCAL_STORAGE_FILE.exists():
-            storage_dict = {"users": {}, "sessions": []}
-            LOCAL_STORAGE_FILE.write_text(json.dumps(storage_dict, indent=2, ensure_ascii=False), encoding="utf-8")
-        else:
-            try:
-                storage_dict = json.loads(LOCAL_STORAGE_FILE.read_text(encoding="utf-8")) or {}
-            except Exception:
-                storage_dict = {}
-        storage_dict.setdefault("users", {})
-        storage_dict.setdefault("sessions", [])
-    LOCAL_STORAGE_FILE.write_text(json.dumps(storage_dict, indent=2, ensure_ascii=False), encoding="utf-8")
-    return storage_dict
+def gh_put_binary(owner_repo: str, path: str, raw_bytes: bytes, message: str, branch: str, sha: Optional[str] = None):
+    """Create/update a binary file (e.g., .mp4) in GitHub."""
+    try:
+        url = f"{GH_API}/repos/{owner_repo}/contents/{path}"
+        body = {
+            "message": message,
+            "content": base64.b64encode(raw_bytes).decode("utf-8"),
+            "branch": branch,
+        }
+        if sha:
+            body["sha"] = sha
+        r = requests.put(url, headers=gh_headers(), json=body, timeout=60)
+        return r.status_code in (200, 201), r.status_code, r.text
+    except Exception as e:
+        return False, 0, str(e)
+
+def gh_raw_url(owner_repo: str, branch: str, path: str) -> str:
+    return f"https://raw.githubusercontent.com/{owner_repo}/{branch}/{path}"
+
+# -----------------------------------------------------------------------------
+# Storage (GitHub JSON + local fallback) + Daily backup
+# -----------------------------------------------------------------------------
+LOCAL_STORAGE_FILE = DATA_DIR / "storage.local.json"  # fallback only
+
+def default_storage() -> Dict[str, Any]:
+    return {"users": {}, "sessions": [], "__last_backup": ""}
 
 def load_storage():
-    # Try GitHub first if enabled
-    if gh_enabled():
-        data, sha = gh_get_storage()
-        if isinstance(data, dict):
+    # Prefer GitHub
+    if GH_TOKEN and GH_REPO and GH_JSON_PATH:
+        txt, sha = gh_get_file(GH_REPO, GH_JSON_PATH, GH_BRANCH)
+        if txt is None:
+            base = default_storage()
+            ok, _, _ = gh_put_text(
+                GH_REPO, GH_JSON_PATH,
+                json.dumps(base, indent=2, ensure_ascii=False),
+                "chore: init storage.json", GH_BRANCH, None
+            )
+            if ok:
+                return base, None
+            else:
+                st.warning("GitHub storage init failed, using local fallback.")
+        else:
+            try:
+                data = json.loads(txt) or default_storage()
+            except Exception:
+                data = default_storage()
             data.setdefault("users", {})
             data.setdefault("sessions", [])
-            # also mirror locally to /tmp as cache
-            _ensure_local_base(data)
-            st.session_state["_gh_sha"] = sha
-            return data
-        # fallback to local if GH failed
-    # Local fallback
-    return _ensure_local_base()
+            data.setdefault("__last_backup", "")
+            return data, sha
 
-def save_storage(storage_dict):
-    # Always keep local cache current
-    _ensure_local_base(storage_dict)
-    # Try committing to GitHub if enabled
-    if gh_enabled():
-        current_sha = st.session_state.get("_gh_sha")
-        new_sha = gh_put_storage(storage_dict, sha=current_sha)
-        if new_sha:
-            st.session_state["_gh_sha"] = new_sha
+    # Local fallback (ephemeral in Cloud)
+    if not LOCAL_STORAGE_FILE.exists():
+        LOCAL_STORAGE_FILE.write_text(json.dumps(default_storage(), indent=2, ensure_ascii=False), encoding="utf-8")
+    try:
+        data = json.loads(LOCAL_STORAGE_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        data = default_storage()
+    data.setdefault("users", {})
+    data.setdefault("sessions", [])
+    data.setdefault("__last_backup", "")
+    return data, None
 
-storage = load_storage()
+def save_storage(storage: dict, current_sha: Optional[str]) -> Optional[str]:
+    txt = json.dumps(storage, indent=2, ensure_ascii=False)
+    if GH_TOKEN and GH_REPO and GH_JSON_PATH:
+        ok, _, _ = gh_put_text(GH_REPO, GH_JSON_PATH, txt, "chore: update storage.json", GH_BRANCH, current_sha)
+        if not ok:
+            # retry with fresh sha
+            fresh_txt, fresh_sha = gh_get_file(GH_REPO, GH_JSON_PATH, GH_BRANCH)
+            ok2, _, _ = gh_put_text(GH_REPO, GH_JSON_PATH, txt, "chore: update storage.json (retry)", GH_BRANCH, fresh_sha)
+            if not ok2:
+                st.error("GitHub save failed — using local fallback for this session.")
+                LOCAL_STORAGE_FILE.write_text(txt, encoding="utf-8")
+                return current_sha
+            return fresh_sha
+        _, new_sha = gh_get_file(GH_REPO, GH_JSON_PATH, GH_BRANCH)
+        return new_sha
+    else:
+        LOCAL_STORAGE_FILE.write_text(txt, encoding="utf-8")
+        return current_sha
 
-# ------------------------------------------------------------------------------------
-# Auth (bcrypt + smart recovery)
-# ------------------------------------------------------------------------------------
-ALLOW_AUTO_RECOVERY = True
+storage, storage_sha = load_storage()
 
+def persist():
+    global storage_sha
+    storage_sha = save_storage(storage, storage_sha)
+
+def ensure_daily_backup():
+    try:
+        if not (GH_TOKEN and GH_REPO):  # only if GH configured
+            return
+        today_str = date.today().strftime("%Y%m%d")
+        if storage.get("__last_backup") == today_str:
+            return
+        backup_rel = f"{GH_BACKUP_DIR.strip('/')}/storage-{today_str}.json"
+        payload = json.dumps(storage, indent=2, ensure_ascii=False)
+        existing, sha = gh_get_file(GH_REPO, backup_rel, GH_BRANCH)
+        if existing is None:
+            gh_put_text(GH_REPO, backup_rel, payload, f"backup: storage {today_str}", GH_BRANCH, None)
+        storage["__last_backup"] = today_str
+        persist()
+    except Exception as e:
+        st.warning(f"Daily backup error: {e}")
+
+if GH_TOKEN and GH_REPO:
+    ensure_daily_backup()
+
+# -----------------------------------------------------------------------------
+# Auth (PBKDF2 via passlib) — bcrypt-free
+# -----------------------------------------------------------------------------
 def hash_pw(password: str) -> str:
-    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    # PBKDF2 handles arbitrary length; returns salted hash with params
+    return pbkdf2_sha256.hash(password)
 
 def verify_pw(password: str, hashed: str) -> bool:
     try:
-        return bcrypt.checkpw(password.encode("utf-8"), hashed.encode("utf-8"))
+        return pbkdf2_sha256.verify(password, hashed)
     except Exception:
         return False
 
@@ -168,43 +241,26 @@ def create_user(email: str, password: str, membership: str = "Free"):
         "membership": membership,
         "created_at": datetime.utcnow().isoformat()
     }
-    save_storage(storage)
 
 def authenticate(email: str, password: str) -> bool:
     u = storage.get("users", {}).get(email)
-    if not u:
-        return False
+    if not u: return False
     ph = u.get("password_hash")
     if isinstance(ph, str) and ph:
-        if verify_pw(password, ph):
-            return True
-        if ALLOW_AUTO_RECOVERY:
-            u["password_hash"] = hash_pw(password)
-            u.pop("password", None)
-            save_storage(storage)
-            return True
-        return False
+        return verify_pw(password, ph)
+    # legacy plaintext (if any)
     if "password" in u:
         if u["password"] == password:
-            u["password_hash"] = hash_pw(password)
-            u.pop("password", None)
-            save_storage(storage)
+            u["password_hash"] = hash_pw(password); u.pop("password", None)
             return True
-        if ALLOW_AUTO_RECOVERY:
-            u["password_hash"] = hash_pw(password)
-            u.pop("password", None)
-            save_storage(storage)
-            return True
-        return False
-    if ALLOW_AUTO_RECOVERY:
-        u["password_hash"] = hash_pw(password)
-        save_storage(storage)
-        return True
+        else:
+            return False
+    # malformed user entry: reject
     return False
 
-# ------------------------------------------------------------------------------------
-# Feedback Library (expanded)
-# ------------------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# Feedback library (expanded)
+# -----------------------------------------------------------------------------
 HANDCRAFTED = {
     "Striker": {
         "Finishing": [
@@ -232,7 +288,7 @@ HANDCRAFTED = {
         ],
         "Crossing": [
             "Arrive half-space early; drive cut-backs to the penalty spot.",
-            "Vary delivery: near-post fizz vs. far-post loft based on runner body shape."
+            "Vary delivery: near-post fizz vs. far-post loft based on runner shape."
         ],
         "Cutting Inside": [
             "Shift with instep; strike across goal with minimal backlift.",
@@ -346,8 +402,9 @@ HANDCRAFTED = {
 def build_feedback_library(handcrafted):
     lib = {}
     strengths = [
-        "Tempo control was stable ✅","Scanning frequency acceptable ✅","Decision speed improved ✅",
-        "Body shape cleaner before receive ✅","Transitions handled with discipline ✅"
+        "Tempo control was stable ✅","Scanning frequency acceptable ✅",
+        "Decision speed improved ✅","Body shape cleaner before receive ✅",
+        "Transitions handled with discipline ✅"
     ]
     improvements = [
         "Improve weak-foot under pressure ⚠️","Accelerate release after first touch ⚠️",
@@ -373,9 +430,9 @@ def build_feedback_library(handcrafted):
 
 FEEDBACK_LIB = build_feedback_library(HANDCRAFTED)
 
-# ------------------------------------------------------------------------------------
-# PDF helpers (crash-proof)
-# ------------------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# PDF helpers (sanitise + hard wrap)
+# -----------------------------------------------------------------------------
 EMOJI_MAP = {"⚽":"[soccer]","✅":"[ok]","⚠️":"[warn]","🔥":"[fire]","🎯":"[target]","💡":"[drill]"}
 def sanitize_for_pdf(text: str) -> str:
     if not text: return ""
@@ -395,7 +452,7 @@ def pdf_safe_block(text: str) -> str:
     return hard_wrap_tokens(sanitize_for_pdf(text), 40)
 
 def create_pdf_bytes(video_name, prompt_text, feedback_text):
-    video_name = pdf_safe_block(video_name)
+    video_name  = pdf_safe_block(video_name)
     prompt_text = pdf_safe_block(prompt_text)
     feedback_text = pdf_safe_block(feedback_text)
 
@@ -437,9 +494,9 @@ def create_pdf_bytes(video_name, prompt_text, feedback_text):
     except Exception: pass
     return data
 
-# ------------------------------------------------------------------------------------
-# CSS (includes membership card styles)
-# ------------------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# CSS / Background
+# -----------------------------------------------------------------------------
 bg_css = ""
 if BACKGROUND_FILE.exists():
     bg_css = f"body {{ background-image: url('file://{BACKGROUND_FILE}'); background-size: cover; background-position: center; }}"
@@ -450,7 +507,8 @@ html, body, [class*="css"] {{ font-family: 'Inter', sans-serif; }}
 .app-card {{ padding: 12px; border-radius: 10px; background: rgba(255,255,255,0.96); }}
 .small-muted {{ color:#666; font-size:12px; }}
 {bg_css}
-/* Membership */
+
+/* Membership cards */
 .tiers {{
   display:grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap:16px;
 }}
@@ -482,21 +540,21 @@ html, body, [class*="css"] {{ font-family: 'Inter', sans-serif; }}
 """
 st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 
-# Optional banner
+# -----------------------------------------------------------------------------
+# Header
+# -----------------------------------------------------------------------------
+st.markdown("## GameSense AI")
+st.caption("⚽ Intelligent football training assistant — upload a clip, get structured feedback, track progress.")
+
 if BANNER_FILE.exists():
-    try:
-        st.image(str(BANNER_FILE), use_column_width=True)
-    except Exception:
-        pass
+    try: st.image(str(BANNER_FILE), use_column_width=True)
+    except Exception: pass
 
-# ------------------------------------------------------------------------------------
-# Sidebar (Auth + Nav)
-# ------------------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# Sidebar: Auth + Nav
+# -----------------------------------------------------------------------------
 with st.sidebar:
-    st.title("GameSense AI")
-    st.write("AI-style football coaching feedback")
-    st.markdown("---")
-
+    st.title("Menu")
     if "user" not in st.session_state:
         st.session_state["user"] = None
 
@@ -506,15 +564,16 @@ with st.sidebar:
             st.session_state["user"] = None
             st.rerun()
         st.markdown("---")
-        page = st.radio("Go to", ["Upload & Feedback","My History","Membership","Dashboard","Account"])
+        page = st.radio("Navigate to", ["Upload & Feedback","My History","Membership","Dashboard","Account"], index=0)
     else:
-        mode = st.radio("Account", ["Sign in","Sign up"])
+        mode = st.radio("Account", ["Sign in","Sign up"], index=0)
         if mode == "Sign in":
             email_in = st.text_input("Email", key="email_in")
             pass_in = st.text_input("Password", type="password", key="pass_in")
             if st.button("Sign in", key="btn_signin"):
                 if authenticate(email_in, pass_in):
                     st.session_state["user"] = email_in
+                    persist()
                     st.success("Signed in")
                     st.rerun()
                 else:
@@ -529,20 +588,23 @@ with st.sidebar:
                 elif user_exists(email_up):
                     st.error("User already exists.")
                 else:
-                    create_user(email_up, pass_up)
-                    st.success("Account created — sign in now.")
+                    try:
+                        create_user(email_up, pass_up)
+                        persist()
+                        st.success("Account created — sign in now.")
+                    except Exception as e:
+                        st.error(f"Error creating account: {e}")
             page = "Account"
 
 if not st.session_state.get("user") and page != "Account":
-    st.info("Please sign in to continue.")
-    st.stop()
+    st.info("Please sign in to continue."); st.stop()
 
 USER = st.session_state.get("user")
 
-# ------------------------------------------------------------------------------------
-# Membership card renderer
-# ------------------------------------------------------------------------------------
-def render_plan(title: str, price: str, perks: list[str], key: str, highlight: bool = False):
+# -----------------------------------------------------------------------------
+# Membership plan card renderer
+# -----------------------------------------------------------------------------
+def render_plan(title: str, price: str, perks: list, key: str, highlight: bool = False):
     card_class = "plan highlight" if highlight else "plan"
     st.markdown(f'<div class="{card_class}">', unsafe_allow_html=True)
     st.markdown(f"<h3>{title}</h3>", unsafe_allow_html=True)
@@ -553,9 +615,28 @@ def render_plan(title: str, price: str, perks: list[str], key: str, highlight: b
     st.markdown("</div>", unsafe_allow_html=True)
     return clicked
 
-# ------------------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# Video upload → GitHub helper
+# -----------------------------------------------------------------------------
+def save_video_to_github(file_bytes: bytes, gh_videos_dir: str, gh_repo: str, gh_branch: str, fname: str):
+    """
+    Saves video bytes into GH_VIDEOS_DIR/fname via GitHub Contents API.
+    Returns (ok, raw_url or error_message).
+    """
+    rel_path = f"{gh_videos_dir.rstrip('/')}/{fname}"
+    ok, code, resp = gh_put_binary(
+        gh_repo, rel_path, file_bytes,
+        message=f"feat: add video {fname}",
+        branch=gh_branch, sha=None
+    )
+    if ok:
+        return True, gh_raw_url(gh_repo, gh_branch, rel_path)
+    else:
+        return False, f"GitHub video upload failed ({code}): {resp[:160]}"
+
+# -----------------------------------------------------------------------------
 # Pages
-# ------------------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
 if page == "Account":
     st.header("Account")
     meta = storage["users"].get(USER, {})
@@ -566,7 +647,7 @@ if page == "Account":
     if st.button("Delete my account"):
         storage["users"].pop(USER, None)
         storage["sessions"] = [s for s in storage.get("sessions", []) if s.get("user") != USER]
-        save_storage(storage)
+        persist()
         st.session_state["user"] = None
         st.success("Account deleted.")
         st.rerun()
@@ -584,20 +665,38 @@ elif page == "Upload & Feedback":
     with c2:
         st.markdown("### Tips")
         st.write("- Keep clips short (30–60s).")
-        st.write("- Use rating to influence highlights.")
-        st.write("- PDFs are crash-proof (long text safe).")
+        st.write("- Rating influences highlights.")
+        st.write("- PDFs are hardened against long text.")
 
     if analyze:
         if not uploaded:
             st.warning("Please upload a video first.")
         else:
             uid = uuid.uuid4().hex
-            save_name = f"{uid}_{uploaded.name}"
-            save_path = VIDEO_DIR / save_name
-            with open(save_path, "wb") as f:
-                f.write(uploaded.getbuffer())
+            original_name = uploaded.name
+            ext = Path(original_name).suffix.lower() or ".mp4"
+            gh_fname = f"{uid}_{Path(original_name).stem}{ext}"
 
-            prompt_text = f"Video: {uploaded.name} | Role: {role} | Skill: {skill} | Rating: {rating}"
+            raw = uploaded.read()
+
+            # local best-effort (optional)
+            local_path_str = ""
+            try:
+                local_path = VIDEO_DIR / gh_fname
+                with open(local_path, "wb") as f:
+                    f.write(raw)
+                local_path_str = str(local_path)
+            except Exception:
+                pass
+
+            ok, video_url_or_err = save_video_to_github(raw, GH_VIDEOS_DIR, GH_REPO, GH_BRANCH, gh_fname)
+            if not ok:
+                st.error(video_url_or_err)
+                video_raw_url = ""
+            else:
+                video_raw_url = video_url_or_err
+
+            prompt_text = f"Video: {original_name} | Role: {role} | Skill: {skill} | Rating: {rating}"
             if custom and custom.strip():
                 prompt_text += " | Note: " + custom.strip()
 
@@ -607,16 +706,17 @@ elif page == "Upload & Feedback":
             feedback += f"\n\nSession rating: {rating}/10"
 
             highlights = []
-            if re.search(r"\b(good|great|excellent|ok)\b", feedback, flags=re.I): highlights.append("✅ Strengths")
-            if re.search(r"\b(improve|work on|warn|avoid)\b", feedback, flags=re.I): highlights.append("⚠️ Improvements")
+            if re.search(r"\b(good|great|excellent|ok|✅)\b", feedback, flags=re.I): highlights.append("✅ Strengths")
+            if re.search(r"\b(improve|work on|warn|avoid|⚠️)\b", feedback, flags=re.I): highlights.append("⚠️ Improvements")
             if rating >= 8: highlights.append("🔥 Strong session")
             elif rating <= 4: highlights.append("🔧 Needs work")
 
             session = {
                 "id": uid,
                 "user": USER,
-                "video_original_name": uploaded.name,
-                "video_saved_path": str(save_path),
+                "video_original_name": original_name,
+                "video_saved_path": local_path_str,      # optional local
+                "video_github_raw_url": video_raw_url,   # authoritative for playback
                 "role": role,
                 "skill": skill,
                 "rating": rating,
@@ -627,13 +727,14 @@ elif page == "Upload & Feedback":
                 "created_at": datetime.utcnow().isoformat()
             }
             storage.setdefault("sessions", []).append(session)
-            save_storage(storage)
+            persist()
 
             st.success("Saved to history")
             st.subheader("AI Feedback")
             st.write(feedback)
-            pdf_b = create_pdf_bytes(uploaded.name, prompt_text, feedback)
-            st.download_button("Download feedback PDF", pdf_b, file_name=f"{uploaded.name}_feedback.pdf", mime="application/pdf")
+
+            pdf_b = create_pdf_bytes(original_name, prompt_text, feedback)
+            st.download_button("Download feedback PDF", pdf_b, file_name=f"{Path(original_name).stem}_feedback.pdf", mime="application/pdf")
 
 elif page == "My History":
     st.header("My History")
@@ -653,21 +754,27 @@ elif page == "My History":
                 st.write(f"Highlights: {', '.join(s.get('highlights') or []) or 'None'}")
                 if st.button("Generate PDF", key=f"pdfbtn_{s.get('id')}"):
                     pdfb = create_pdf_bytes(s.get("video_original_name"), s.get("prompt_text"), s.get("feedback"))
-                    st.download_button("Download PDF", pdfb, file_name=f"{s.get('video_original_name')}_feedback.pdf", mime="application/pdf", key=f"dl_{s.get('id')}")
+                    st.download_button(
+                        "Download PDF", pdfb,
+                        file_name=f"{Path(s.get('video_original_name','video')).stem}_feedback.pdf",
+                        mime="application/pdf",
+                        key=f"dl_{s.get('id')}"
+                    )
+
             with cols[1]:
-                vpath = s.get("video_saved_path")
-                if vpath and Path(vpath).exists():
-                    st.video(vpath)
+                url = s.get("video_github_raw_url")
+                if url:
+                    st.video(url)
                 else:
-                    st.write("Video missing.")
+                    vpath = s.get("video_saved_path")
+                    if vpath and Path(vpath).exists():
+                        st.video(vpath)
+                    else:
+                        st.write("Video not available.")
+
                 if st.button("Delete", key=f"del_{s.get('id')}"):
-                    try:
-                        if vpath and Path(vpath).exists():
-                            Path(vpath).unlink()
-                    except Exception:
-                        pass
                     storage["sessions"] = [x for x in storage.get("sessions", []) if x.get("id") != s.get("id")]
-                    save_storage(storage)
+                    persist()
                     st.success("Deleted")
                     st.rerun()
 
@@ -703,7 +810,7 @@ elif page == "Membership":
                 "Weak foot & body-shape breakdown",
                 "Custom training suggestions",
                 "Download PDFs & export summaries",
-            ], "key": "choose_academy", "highlight": True,  # BEST VALUE
+            ], "key": "choose_academy", "highlight": True,
         },
         {
             "title": "Pro", "price": "£29.99 / month",
@@ -723,7 +830,7 @@ elif page == "Membership":
         with col:
             if render_plan(plan["title"], plan["price"], plan["perks"], plan["key"], plan["highlight"]):
                 storage["users"].setdefault(USER, {})["membership"] = plan["title"]
-                save_storage(storage)
+                persist()
                 st.success(f"Upgraded to {plan['title']} 🎉")
                 st.rerun()
     st.markdown('</div>', unsafe_allow_html=True)

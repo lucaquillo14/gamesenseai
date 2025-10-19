@@ -1,0 +1,64 @@
+{
+  "users": {
+    "test@3.com": {
+      "password_hash": "$pbkdf2-sha256$29000$bu2dM4Yw5jwHYIwRovQeww$7SLynpv09ILe2EddyPBZJGcrQpQ99dG0ibQYf.8Gf.A",
+      "membership": "Free",
+      "created_at": "2025-10-19T14:51:11.972171"
+    }
+  },
+  "sessions": [
+    {
+      "id": "ee3f3cfb2a2142bba9958292e180617c",
+      "user": "test@3.com",
+      "video_original_name": "ScreenRecording_10-13-2025 16-20-52_1.mov",
+      "video_saved_path": "/Users/lucasaguillo/Desktop/gamesense-ai/frontend/videos/ee3f3cfb2a2142bba9958292e180617c_ScreenRecording_10-13-2025 16-20-52_1.mov",
+      "video_github_raw_url": "",
+      "role": "Fullback",
+      "skill": "1v1 Defending",
+      "rating": 3,
+      "custom_prompt": "",
+      "prompt_text": "Video: ScreenRecording_10-13-2025 16-20-52_1.mov | Role: Fullback | Skill: 1v1 Defending | Rating: 3",
+      "feedback": "Decision speed improved ✅. Lower centre; strike through the ball cleanly.\n\nSession rating: 3/10",
+      "highlights": [
+        "🔧 Needs work"
+      ],
+      "created_at": "2025-10-19T14:51:40.061493"
+    },
+    {
+      "id": "e43ab235dea24cc1a7e2abde6804f74a",
+      "user": "test@3.com",
+      "video_original_name": "ScreenRecording_10-13-2025 16-20-52_1.mov",
+      "video_saved_path": "/Users/lucasaguillo/Desktop/gamesense-ai/frontend/videos/e43ab235dea24cc1a7e2abde6804f74a_ScreenRecording_10-13-2025 16-20-52_1.mov",
+      "video_github_raw_url": "",
+      "role": "Fullback",
+      "skill": "1v1 Defending",
+      "rating": 3,
+      "custom_prompt": "",
+      "prompt_text": "Video: ScreenRecording_10-13-2025 16-20-52_1.mov | Role: Fullback | Skill: 1v1 Defending | Rating: 3",
+      "feedback": "Show outside; match feet; wait for heavy touch. — Improve weak-foot under pressure ⚠️. Drill: 8x clipped diagonals (switch)\n\nSession rating: 3/10",
+      "highlights": [
+        "⚠️ Improvements",
+        "🔧 Needs work"
+      ],
+      "created_at": "2025-10-19T14:52:30.936509"
+    },
+    {
+      "id": "7cfda76ade4a4086a280e7491fd4f126",
+      "user": "test@3.com",
+      "video_original_name": "ScreenRecording_10-13-2025 16-20-52_1.mov",
+      "video_saved_path": "/Users/lucasaguillo/Desktop/gamesense-ai/frontend/videos/7cfda76ade4a4086a280e7491fd4f126_ScreenRecording_10-13-2025 16-20-52_1.mov",
+      "video_github_raw_url": "",
+      "role": "Winger",
+      "skill": "Cutting Inside",
+      "rating": 9,
+      "custom_prompt": "",
+      "prompt_text": "Video: ScreenRecording_10-13-2025 16-20-52_1.mov | Role: Winger | Skill: Cutting Inside | Rating: 9",
+      "feedback": "Shift with instep; strike across goal with minimal backlift. — Trigger earlier off passer cues ⚠️. Drill: 12x low driven cut-backs\n\nSession rating: 9/10",
+      "highlights": [
+        "🔥 Strong session"
+      ],
+      "created_at": "2025-10-19T14:56:44.967445"
+    }
+  ],
+  "__last_backup": ""
+}
