@@ -71,6 +71,23 @@
         "🔧 Needs work"
       ],
       "created_at": "2025-10-19T15:21:33.631096"
+    },
+    {
+      "id": "fc2450166d9544e280f2617411dd333d",
+      "user": "cristinadelmolino@gmail.com",
+      "video_original_name": "ScreenRecording_10-13-2025 16-20-52_1.mov",
+      "video_saved_path": "/mount/src/gamesenseai/videos/fc2450166d9544e280f2617411dd333d_ScreenRecording_10-13-2025 16-20-52_1.mov",
+      "video_github_raw_url": "https://raw.githubusercontent.com/lucaquillo14/gamesenseai/main/data/videos/fc2450166d9544e280f2617411dd333d_ScreenRecording_10-13-2025 16-20-52_1.mov",
+      "role": "Winger",
+      "skill": "Crossing",
+      "rating": 2,
+      "custom_prompt": "",
+      "prompt_text": "Video: ScreenRecording_10-13-2025 16-20-52_1.mov | Role: Winger | Skill: Crossing | Rating: 2",
+      "feedback": "Vary delivery: near-post fizz vs. far-post loft based on runner shape.\n\nSession rating: 2/10",
+      "highlights": [
+        "🔧 Needs work"
+      ],
+      "created_at": "2025-10-19T15:21:52.383362"
     }
   ],
   "__last_backup": "20251019"
