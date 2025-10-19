@@ -4,6 +4,11 @@
       "password_hash": "$2b$12$DfspsbNu4vKJ2wvebQfXJe2oFxZZGa5x867IUZdpYoiBoP9/H65Sq",
       "membership": "Free",
       "created_at": "2025-10-19T13:51:42.642120"
+    },
+    "test@6.com": {
+      "password_hash": "$pbkdf2-sha256$29000$NGaMUSpFSMlZa20NAYDQGg$bsg8KGFeKB8tdtaZgQt.Ib/hT0i.vCOsn6IfwSfwZSo",
+      "membership": "Free",
+      "created_at": "2025-10-19T15:15:08.309287"
     }
   },
   "sessions": [
