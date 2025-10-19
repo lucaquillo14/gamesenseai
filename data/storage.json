@@ -27,6 +27,23 @@
         "🔥 Strong session"
       ],
       "created_at": "2025-10-19T13:52:09.016698"
+    },
+    {
+      "id": "e6865aa1560c4233aaaff63dc5822d52",
+      "user": "test@6.com",
+      "video_original_name": "ScreenRecording_10-13-2025 16-20-52_1.mov",
+      "video_saved_path": "/mount/src/gamesenseai/videos/e6865aa1560c4233aaaff63dc5822d52_ScreenRecording_10-13-2025 16-20-52_1.mov",
+      "video_github_raw_url": "https://raw.githubusercontent.com/lucaquillo14/gamesenseai/main/data/videos/e6865aa1560c4233aaaff63dc5822d52_ScreenRecording_10-13-2025 16-20-52_1.mov",
+      "role": "Winger",
+      "skill": "Crossing",
+      "rating": 2,
+      "custom_prompt": "",
+      "prompt_text": "Video: ScreenRecording_10-13-2025 16-20-52_1.mov | Role: Winger | Skill: Crossing | Rating: 2",
+      "feedback": "Vary delivery: near-post fizz vs. far-post loft based on runner shape. — Protect central lanes in rest defence ⚠️. Drill: 6-min 5v2 rondo (2-touch)\n\nSession rating: 2/10",
+      "highlights": [
+        "🔧 Needs work"
+      ],
+      "created_at": "2025-10-19T15:15:40.002660"
     }
   ],
   "__last_backup": "20251019"
