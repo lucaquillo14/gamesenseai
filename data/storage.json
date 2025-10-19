@@ -54,6 +54,23 @@
         "🔧 Needs work"
       ],
       "created_at": "2025-10-19T15:15:40.002660"
+    },
+    {
+      "id": "d3c3aff2cef44aea9ac3ba5aabcd3268",
+      "user": "cristinadelmolino@gmail.com",
+      "video_original_name": "ScreenRecording_10-13-2025 16-20-52_1.mov",
+      "video_saved_path": "/mount/src/gamesenseai/videos/d3c3aff2cef44aea9ac3ba5aabcd3268_ScreenRecording_10-13-2025 16-20-52_1.mov",
+      "video_github_raw_url": "https://raw.githubusercontent.com/lucaquillo14/gamesenseai/main/data/videos/d3c3aff2cef44aea9ac3ba5aabcd3268_ScreenRecording_10-13-2025 16-20-52_1.mov",
+      "role": "Box-to-Box Midfielder",
+      "skill": "Ball Recoveries",
+      "rating": 2,
+      "custom_prompt": "",
+      "prompt_text": "Video: ScreenRecording_10-13-2025 16-20-52_1.mov | Role: Box-to-Box Midfielder | Skill: Ball Recoveries | Rating: 2",
+      "feedback": "Anticipate second balls; first touch forward after regain.\n\nSession rating: 2/10",
+      "highlights": [
+        "🔧 Needs work"
+      ],
+      "created_at": "2025-10-19T15:21:33.631096"
     }
   ],
   "__last_backup": "20251019"
